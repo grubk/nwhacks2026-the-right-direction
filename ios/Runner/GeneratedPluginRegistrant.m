@@ -30,6 +30,12 @@
 @import google_mlkit_commons;
 #endif
 
+#if __has_include(<google_mlkit_image_labeling/GoogleMlKitImageLabelingPlugin.h>)
+#import <google_mlkit_image_labeling/GoogleMlKitImageLabelingPlugin.h>
+#else
+@import google_mlkit_image_labeling;
+#endif
+
 #if __has_include(<google_mlkit_object_detection/GoogleMlKitObjectDetectionPlugin.h>)
 #import <google_mlkit_object_detection/GoogleMlKitObjectDetectionPlugin.h>
 #else
@@ -40,6 +46,12 @@
 #import <google_mlkit_pose_detection/GoogleMlKitPoseDetectionPlugin.h>
 #else
 @import google_mlkit_pose_detection;
+#endif
+
+#if __has_include(<path_provider_foundation/PathProviderPlugin.h>)
+#import <path_provider_foundation/PathProviderPlugin.h>
+#else
+@import path_provider_foundation;
 #endif
 
 #if __has_include(<permission_handler_apple/PermissionHandlerPlugin.h>)
@@ -73,8 +85,10 @@
   [FPPDeviceInfoPlusPlugin registerWithRegistrar:[registry registrarForPlugin:@"FPPDeviceInfoPlusPlugin"]];
   [FlutterTtsPlugin registerWithRegistrar:[registry registrarForPlugin:@"FlutterTtsPlugin"]];
   [GoogleMlKitCommonsPlugin registerWithRegistrar:[registry registrarForPlugin:@"GoogleMlKitCommonsPlugin"]];
+  [GoogleMlKitImageLabelingPlugin registerWithRegistrar:[registry registrarForPlugin:@"GoogleMlKitImageLabelingPlugin"]];
   [GoogleMlKitObjectDetectionPlugin registerWithRegistrar:[registry registrarForPlugin:@"GoogleMlKitObjectDetectionPlugin"]];
   [GoogleMlKitPoseDetectionPlugin registerWithRegistrar:[registry registrarForPlugin:@"GoogleMlKitPoseDetectionPlugin"]];
+  [PathProviderPlugin registerWithRegistrar:[registry registrarForPlugin:@"PathProviderPlugin"]];
   [PermissionHandlerPlugin registerWithRegistrar:[registry registrarForPlugin:@"PermissionHandlerPlugin"]];
   [SharedPreferencesPlugin registerWithRegistrar:[registry registrarForPlugin:@"SharedPreferencesPlugin"]];
   [SpeechToTextPlugin registerWithRegistrar:[registry registrarForPlugin:@"SpeechToTextPlugin"]];

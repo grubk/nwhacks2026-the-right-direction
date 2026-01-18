@@ -19,10 +19,10 @@ class DetectedObject {
 
   /// Proximity level for haptic feedback
   ProximityLevel get proximityLevel {
-    if (distance < 0.5) return ProximityLevel.veryClose;
-    if (distance < 2.0) return ProximityLevel.close;
-    if (distance < 3.0) return ProximityLevel.medium;
-    if (distance < 6.0) return ProximityLevel.far;
+    if (distance < 1.0) return ProximityLevel.veryClose;
+    if (distance < 1.5) return ProximityLevel.close;
+    if (distance < 2.5) return ProximityLevel.medium;
+    if (distance < 4.0) return ProximityLevel.far;
     return ProximityLevel.veryFar;
   }
 }
@@ -35,10 +35,10 @@ enum ObjectDirection {
 }
 
 enum ProximityLevel {
-  veryClose,  // < 0.5m - urgent warning
-  close,      // 0.5-1m - strong warning
-  medium,     // 1-2m - moderate warning
-  far,        // 2-4m - light notification
+  veryClose,  // < 1m - urgent warning (haptic)
+  close,      // 1-1.5m - strong warning (haptic)
+  medium,     // 1.5-2.5m - moderate warning (TTS only)
+  far,        // 2.5-4m - light notification (TTS only)
   veryFar,    // > 4m - minimal/no feedback
 }
 
@@ -67,7 +67,7 @@ abstract class CameraService {
   /// Initialize camera for object detection
   Future<void> initialize({
     CameraLensDirection direction = CameraLensDirection.back,
-    ResolutionPreset resolution = ResolutionPreset.medium,
+    ResolutionPreset resolution = ResolutionPreset.veryHigh,
   });
 
   /// Start streaming camera frames for analysis
@@ -181,7 +181,7 @@ class CameraServiceImpl implements CameraService {
   @override
   Future<void> initialize({
     CameraLensDirection direction = CameraLensDirection.back,
-    ResolutionPreset resolution = ResolutionPreset.medium,
+    ResolutionPreset resolution = ResolutionPreset.veryHigh,
   }) async {
     _state = CameraState.initializing;
     

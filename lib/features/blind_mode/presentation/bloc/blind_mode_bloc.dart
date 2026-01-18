@@ -29,7 +29,7 @@ class BlindModeBloc extends Bloc<BlindModeEvent, BlindModeState> {
   
   // Throttle TTS to avoid overlapping speech
   DateTime? _lastTtsTime;
-  static const _ttsInterval = Duration(seconds: 2);
+  static const _ttsInterval = Duration(seconds: 3);
 
   BlindModeBloc({
     required this.detectObjects,
@@ -172,11 +172,9 @@ class BlindModeBloc extends Bloc<BlindModeEvent, BlindModeState> {
       case NavigationAlertLevel.clear:
         return; // No haptic for clear path
       case NavigationAlertLevel.low:
-        pattern = HapticPattern.proximityFar;
-        break;
+        return; // No haptic for low alert - object is far enough
       case NavigationAlertLevel.moderate:
-        pattern = HapticPattern.proximityMedium;
-        break;
+        return; // No haptic for moderate - just TTS notification
       case NavigationAlertLevel.high:
         pattern = HapticPattern.proximityClose;
         break;

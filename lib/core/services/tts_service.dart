@@ -140,11 +140,20 @@ class TtsServiceImpl implements TtsService {
   Future<void> speak(String text, {TtsPriority priority = TtsPriority.normal}) async {
     if (text.isEmpty) return;
 
-    // Handle priority
-    if (priority == TtsPriority.critical || 
-        (priority == TtsPriority.high && _currentPriority.index < priority.index)) {
+    // Only critical priority interrupts current speech
+    // All other priorities wait for current speech to finish
+    if (priority == TtsPriority.critical) {
       await stop();
       _speechQueue.clear();
+      _currentPriority = priority;
+      await _tts.speak(text);
+      return;
+    }
+
+    // If currently speaking, queue the new speech instead of interrupting
+    if (_isSpeaking) {
+      _speechQueue.add(_QueuedSpeech(text: text, priority: priority));
+      return;
     }
 
     _currentPriority = priority;

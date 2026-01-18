@@ -1,9 +1,10 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:typed_data';
-import 'dart:ui';
+import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_object_detection/google_mlkit_object_detection.dart' as mlkit;
+import 'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart' as labeling;
+import 'package:tflite_flutter/tflite_flutter.dart' as tfl;
 
 import 'camera_service.dart';
 
@@ -90,6 +91,12 @@ class MlServiceImpl implements MlService {
   static const _channel = MethodChannel('com.therightdirection/ml');
   
   mlkit.ObjectDetector? _mlKitObjectDetector;
+  labeling.ImageLabeler? _imageLabeler;
+  
+  // TFLite interpreter for COCO object detection
+  tfl.Interpreter? _tfliteInterpreter;
+  List<String> _cocoLabels = [];
+  bool _tfliteAvailable = false;
   
   bool _isInitialized = false;
   
@@ -98,29 +105,28 @@ class MlServiceImpl implements MlService {
   List<String> _signLabels = [];
 
   // Object size reference for distance estimation (in meters)
+  // Extended to include common ML Kit Image Labeler labels
   static const Map<String, double> _objectReferenceHeights = {
+    // People
     'person': 1.7,
+    'man': 1.75,
+    'woman': 1.65,
+    'child': 1.2,
+    'pedestrian': 1.7,
+    
+    // Vehicles
     'car': 1.5,
+    'automobile': 1.5,
+    'vehicle': 1.5,
+    'truck': 2.5,
+    'bus': 3.0,
+    'motorcycle': 1.1,
     'bicycle': 1.0,
+    'bike': 1.0,
+    
+    // Animals
     'dog': 0.5,
     'cat': 0.3,
-    'chair': 0.8,
-    'bottle': 0.25,
-    'tv': 0.6,
-    'laptop': 0.3,
-    'cell phone': 0.15,
-    'book': 0.25,
-    'cup': 0.12,
-    'door': 2.0,
-    'table': 0.75,
-    'couch': 0.9,
-    'bed': 0.6,
-    'toilet': 0.4,
-    'sink': 0.6,
-    'refrigerator': 1.7,
-    'stop sign': 0.75,
-    'fire hydrant': 0.5,
-    'bench': 0.45,
     'bird': 0.2,
     'horse': 1.6,
     'sheep': 0.7,
@@ -129,21 +135,49 @@ class MlServiceImpl implements MlService {
     'bear': 1.5,
     'zebra': 1.4,
     'giraffe': 5.5,
-    'backpack': 0.5,
-    'umbrella': 1.0,
-    'handbag': 0.3,
-    'tie': 0.5,
-    'suitcase': 0.7,
-    'sports ball': 0.22,
-    'kite': 0.8,
-    'tennis racket': 0.7,
-    'skateboard': 0.1,
-    'surfboard': 2.0,
+    'pet': 0.4,
+    'animal': 0.6,
+    
+    // Furniture
+    'chair': 0.8,
+    'table': 0.75,
+    'desk': 0.75,
+    'couch': 0.9,
+    'sofa': 0.9,
+    'bed': 0.6,
+    'bench': 0.45,
+    'furniture': 0.8,
+    'shelf': 1.5,
+    'cabinet': 1.2,
+    'drawer': 0.6,
+    
+    // Electronics
+    'tv': 0.6,
+    'television': 0.6,
+    'monitor': 0.5,
+    'laptop': 0.3,
+    'computer': 0.5,
+    'cell phone': 0.15,
+    'phone': 0.15,
+    'tablet': 0.25,
+    'keyboard': 0.45,
+    'mouse': 0.05,
+    
+    // Kitchen/dining
+    'bottle': 0.25,
+    'cup': 0.12,
+    'mug': 0.12,
+    'glass': 0.15,
     'wine glass': 0.2,
-    'fork': 0.2,
-    'knife': 0.25,
-    'spoon': 0.18,
     'bowl': 0.1,
+    'plate': 0.03,
+    'refrigerator': 1.7,
+    'fridge': 1.7,
+    'microwave': 0.35,
+    'oven': 0.9,
+    'stove': 0.9,
+    
+    // Food
     'banana': 0.2,
     'apple': 0.08,
     'sandwich': 0.1,
@@ -152,14 +186,76 @@ class MlServiceImpl implements MlService {
     'carrot': 0.2,
     'pizza': 0.35,
     'cake': 0.15,
+    'food': 0.15,
+    'fruit': 0.1,
+    
+    // Indoor structures
+    'door': 2.0,
+    'window': 1.2,
+    'wall': 2.5,
+    'floor': 0.01,
+    'ceiling': 2.5,
+    'stairs': 2.0,
+    'staircase': 2.0,
+    'toilet': 0.4,
+    'sink': 0.6,
+    'bathtub': 0.6,
+    
+    // Outdoor structures
+    'building': 10.0,
+    'house': 6.0,
+    'tree': 4.0,
+    'pole': 5.0,
+    'sign': 1.5,
+    'stop sign': 0.75,
+    'traffic light': 1.0,
+    'fire hydrant': 0.5,
+    'fence': 1.5,
+    'sidewalk': 0.02,
+    'road': 0.01,
+    'street': 0.01,
+    
+    // Personal items
+    'backpack': 0.5,
+    'bag': 0.4,
+    'umbrella': 1.0,
+    'handbag': 0.3,
+    'purse': 0.3,
+    'suitcase': 0.7,
+    'luggage': 0.7,
+    
+    // Sports/recreation
+    'sports ball': 0.22,
+    'ball': 0.22,
+    'kite': 0.8,
+    'tennis racket': 0.7,
+    'skateboard': 0.1,
+    'surfboard': 2.0,
+    
+    // Utensils
+    'fork': 0.2,
+    'knife': 0.25,
+    'spoon': 0.18,
+    'scissors': 0.2,
+    
+    // Plants
     'potted plant': 0.5,
-    'mouse': 0.05,
-    'keyboard': 0.45,
+    'plant': 0.5,
+    'flower': 0.3,
+    
+    // Misc
+    'book': 0.25,
     'clock': 0.3,
     'vase': 0.3,
-    'scissors': 0.2,
+    'tie': 0.5,
     'toothbrush': 0.2,
     'hair drier': 0.25,
+    'box': 0.4,
+    'pillow': 0.2,
+    'blanket': 0.05,
+    'curtain': 2.0,
+    'lamp': 0.5,
+    'light': 0.3,
   };
 
   @override
@@ -172,6 +268,27 @@ class MlServiceImpl implements MlService {
     print('[ML DEBUG] Initializing ML Service with Google ML Kit...');
 
     try {
+      // Load COCO labels for TFLite model
+      try {
+        final labelsData = await rootBundle.loadString('assets/models/coco_labels.txt');
+        _cocoLabels = labelsData.split('\n').where((s) => s.trim().isNotEmpty).toList();
+        print('[ML DEBUG] Loaded ${_cocoLabels.length} COCO labels');
+      } catch (e) {
+        print('[ML DEBUG] Could not load COCO labels: $e');
+      }
+      
+      // Try to load TFLite model (SSD MobileNet COCO)
+      try {
+        print('[ML DEBUG] Attempting to load TFLite model from assets/models/ssd_mobilenet.tflite...');
+        _tfliteInterpreter = await tfl.Interpreter.fromAsset('assets/models/ssd_mobilenet.tflite');
+        _tfliteAvailable = true;
+        print('[ML DEBUG] TFLite SSD MobileNet model loaded successfully');
+      } catch (e, stackTrace) {
+        print('[ML DEBUG] TFLite model load FAILED: $e');
+        print('[ML DEBUG] TFLite stack trace: $stackTrace');
+        _tfliteAvailable = false;
+      }
+      
       // Configure ML Kit Object Detector with base model (no download needed)
       final options = mlkit.ObjectDetectorOptions(
         mode: mlkit.DetectionMode.stream,
@@ -181,6 +298,13 @@ class MlServiceImpl implements MlService {
       
       _mlKitObjectDetector = mlkit.ObjectDetector(options: options);
       print('[ML DEBUG] Google ML Kit Object Detector created successfully');
+
+      // Initialize Image Labeler for better object labeling
+      final labelerOptions = labeling.ImageLabelerOptions(
+        confidenceThreshold: 0.5,
+      );
+      _imageLabeler = labeling.ImageLabeler(options: labelerOptions);
+      print('[ML DEBUG] Google ML Kit Image Labeler created successfully');
 
       _isInitialized = true;
       print('[ML DEBUG] ML Service initialization complete');
@@ -207,86 +331,419 @@ class MlServiceImpl implements MlService {
 
   @override
   Future<List<DetectedObject>> detectObjects(CameraImage image) async {
-    if (!_isInitialized || _mlKitObjectDetector == null) {
-      print('[ML DEBUG] detectObjects called but not initialized (initialized=$_isInitialized, detector=${_mlKitObjectDetector != null})');
+    if (!_isInitialized) {
+      print('[ML DEBUG] detectObjects called but not initialized');
       return [];
     }
 
     try {
-      // Convert CameraImage to InputImage for ML Kit
+      final allResults = <DetectedObject>[];
+      
+      // Convert CameraImage to InputImage for ML Kit first
       final inputImage = _convertToInputImage(image);
-      if (inputImage == null) {
-        print('[ML DEBUG] Failed to convert camera image to InputImage');
-        return [];
-      }
-
-      // Run ML Kit object detection
-      final detectedObjects = await _mlKitObjectDetector!.processImage(inputImage);
       
-      // Convert ML Kit results to our DetectedObject format
-      final results = <DetectedObject>[];
-      
-      if (detectedObjects.isNotEmpty) {
-        print('[ML DEBUG] ML Kit detected ${detectedObjects.length} objects');
-        
-        for (final obj in detectedObjects) {
-          // Get the best label
-          String label = 'object';
-          double confidence = 0.5;
-          
-          if (obj.labels.isNotEmpty) {
-            final bestLabel = obj.labels.reduce((a, b) => 
-              a.confidence > b.confidence ? a : b);
-            label = bestLabel.text.toLowerCase();
-            confidence = bestLabel.confidence;
+      // PRIORITY 1: Run ML Kit Image Labeler (most accurate labels, 400+ types)
+      List<labeling.ImageLabel> imageLabels = [];
+      if (_imageLabeler != null && inputImage != null) {
+        try {
+          imageLabels = await _imageLabeler!.processImage(inputImage);
+          if (imageLabels.isNotEmpty) {
+            print('[ML DEBUG] Image labeler found ${imageLabels.length} labels: ${imageLabels.map((l) => '${l.label}(${(l.confidence * 100).toStringAsFixed(0)}%)').join(', ')}');
+            
+            // Create detections from high-confidence image labels
+            // These don't have bounding boxes, so we create center-positioned alerts
+            for (final label in imageLabels) {
+              if (label.confidence < 0.50) continue; // 50% threshold for image labels
+              
+              final labelText = label.label.toLowerCase();
+              // Skip generic/abstract labels
+              if (_isGenericLabel(labelText)) continue;
+              
+              // Create a center-positioned detection for scene-level objects
+              // Note: Image Labeler doesn't provide bounding boxes, so we use a placeholder
+              // and estimate distance based on confidence level instead of box size
+              final boundingBox = BoundingBox(
+                left: 0.25,
+                top: 0.25,
+                right: 0.75,
+                bottom: 0.75,
+              );
+              
+              // For Image Labeler (no real bounding box), estimate distance from confidence:
+              // - High confidence (>0.8) often means prominent/closer objects: ~2-3m
+              // - Medium confidence (0.6-0.8) suggests medium distance: ~4-5m
+              // - Lower confidence (<0.6) suggests farther/smaller objects: ~6-8m
+              // This is a heuristic since we don't have actual spatial data
+              final distance = _estimateDistanceFromConfidence(label.confidence, labelText);
+              
+              allResults.add(DetectedObject(
+                label: labelText,
+                confidence: label.confidence,
+                distance: distance,
+                direction: ObjectDirection.center,
+                boundingBox: boundingBox,
+              ));
+              
+              print('[ML DEBUG] Image Label: ${labelText} (${(label.confidence * 100).toStringAsFixed(1)}%) at ${distance.toStringAsFixed(1)}m (confidence-based)');
+            }
           }
-
-          // Skip low confidence detections
-          if (confidence < 0.3) continue;
-
-          // Convert bounding box (ML Kit uses pixel coordinates)
-          final rect = obj.boundingBox;
-          final boundingBox = BoundingBox(
-            left: rect.left / image.width,
-            top: rect.top / image.height,
-            right: rect.right / image.width,
-            bottom: rect.bottom / image.height,
-          );
-
-          // Estimate distance based on bounding box
-          final distance = _estimateDistanceFromBox(
-            label,
-            boundingBox,
-            image.width,
-            image.height,
-          );
-
-          // Determine direction
-          final direction = _determineDirection(boundingBox);
-
-          results.add(DetectedObject(
-            label: label,
-            confidence: confidence,
-            distance: distance,
-            direction: direction,
-            boundingBox: boundingBox,
-          ));
+        } catch (e) {
+          print('[ML DEBUG] Image labeling error: $e');
         }
       }
       
-      // If ML Kit didn't detect anything, use fallback obstacle detection
-      // This analyzes the image for potential obstacles (walls, large surfaces)
-      if (results.isEmpty) {
-        final fallbackResults = _detectObstaclesFallback(image);
-        results.addAll(fallbackResults);
+      // PRIORITY 2: Run TFLite for bounding box detection (if we need positions)
+      if (_tfliteAvailable && _tfliteInterpreter != null && _cocoLabels.isNotEmpty) {
+        print('[ML DEBUG] Attempting TFLite detection...');
+        final tfliteResults = await _detectWithTflite(image);
+        if (tfliteResults.isNotEmpty) {
+          print('[ML DEBUG] TFLite detected ${tfliteResults.length} objects with bounding boxes');
+          // Add TFLite results that don't overlap with image labeler results
+          for (final tfliteObj in tfliteResults) {
+            // Check if this label is already detected by image labeler
+            final alreadyDetected = allResults.any((r) => 
+              r.label.toLowerCase() == tfliteObj.label.toLowerCase());
+            if (!alreadyDetected) {
+              allResults.add(tfliteObj);
+            }
+          }
+        }
       }
+      
+      // PRIORITY 3: Run ML Kit Object Detector for additional bounding boxes
+      if (_mlKitObjectDetector != null && inputImage != null) {
+        // Run ML Kit object detection
+        final detectedObjects = await _mlKitObjectDetector!.processImage(inputImage);
+        
+        // Convert ML Kit results to our DetectedObject format
+        final mlKitResults = <DetectedObject>[];
+        
+        if (detectedObjects.isNotEmpty) {
+          print('[ML DEBUG] ML Kit Object Detector found ${detectedObjects.length} objects');
+          
+          for (final obj in detectedObjects) {
+            // Get the best label from object detection
+            String label = 'object';
+            double confidence = 0.5;
+            
+            if (obj.labels.isNotEmpty) {
+              final bestLabel = obj.labels.reduce((a, b) => 
+                a.confidence > b.confidence ? a : b);
+              label = bestLabel.text.toLowerCase();
+              confidence = bestLabel.confidence;
+            }
+            
+            // If object detection gave a generic label, try to use image labeling
+            if ((label == 'object' || label == 'unknown' || label.isEmpty) && imageLabels.isNotEmpty) {
+              // Filter out generic/useless labels
+              final usefulLabels = imageLabels.where((l) {
+                final text = l.label.toLowerCase();
+                return !_isGenericLabel(text);
+              }).toList();
+              
+              if (usefulLabels.isNotEmpty) {
+                final bestImageLabel = usefulLabels.reduce((a, b) => 
+                  a.confidence > b.confidence ? a : b);
+                label = bestImageLabel.label.toLowerCase();
+                confidence = bestImageLabel.confidence;
+              }
+            }
 
-      return results;
+            // Skip low confidence detections
+            if (confidence < 0.3) continue;
+            
+            // Skip if already detected by image labeler
+            final alreadyDetected = allResults.any((r) => 
+              r.label.toLowerCase() == label.toLowerCase());
+            if (alreadyDetected) continue;
+
+            // Convert bounding box (ML Kit uses pixel coordinates)
+            final rect = obj.boundingBox;
+            final boundingBox = BoundingBox(
+              left: rect.left / image.width,
+              top: rect.top / image.height,
+              right: rect.right / image.width,
+              bottom: rect.bottom / image.height,
+            );
+
+            // Estimate distance based on bounding box
+            final distance = _estimateDistanceFromBox(
+              label,
+              boundingBox,
+              image.width,
+              image.height,
+            );
+
+            // Determine direction
+            final direction = _determineDirection(boundingBox);
+
+            mlKitResults.add(DetectedObject(
+              label: label,
+              confidence: confidence,
+              distance: distance,
+              direction: direction,
+              boundingBox: boundingBox,
+            ));
+          }
+        }
+        
+        // Add ML Kit Object Detector results
+        if (mlKitResults.isNotEmpty) {
+          print('[ML DEBUG] ML Kit Object Detector added ${mlKitResults.length} objects');
+          allResults.addAll(mlKitResults);
+        }
+      }
+      
+      // If nothing detected, use fallback obstacle detection
+      if (allResults.isEmpty) {
+        final fallbackResults = _detectObstaclesFallback(image);
+        allResults.addAll(fallbackResults);
+      }
+      
+      print('[ML DEBUG] Total combined detections: ${allResults.length}');
+      return allResults;
     } catch (e, stackTrace) {
       print('[ML DEBUG] Object detection error: $e');
       print('[ML DEBUG] Stack trace: $stackTrace');
       return [];
     }
+  }
+
+  /// Detect objects using TFLite SSD MobileNet model (COCO labels)
+  Future<List<DetectedObject>> _detectWithTflite(CameraImage image) async {
+    if (_tfliteInterpreter == null || _cocoLabels.isEmpty) {
+      print('[TFLite DEBUG] Skipping - interpreter=${_tfliteInterpreter != null}, labels=${_cocoLabels.length}');
+      return [];
+    }
+    
+    try {
+      // SSD MobileNet expects 300x300 RGB input
+      const inputSize = 300;
+      
+      // Convert YUV to RGB and resize
+      final rgbImage = _convertYuvToRgb(image);
+      if (rgbImage == null) {
+        print('[TFLite DEBUG] YUV to RGB conversion failed');
+        return [];
+      }
+      print('[TFLite DEBUG] Converted to RGB: ${rgbImage.length} bytes');
+      
+      // Resize to model input size
+      final resizedInput = _resizeImage(rgbImage, image.width, image.height, inputSize, inputSize);
+      print('[TFLite DEBUG] Resized to ${inputSize}x${inputSize}');
+      
+      // Get model input/output info
+      final inputTensor = _tfliteInterpreter!.getInputTensor(0);
+      print('[TFLite DEBUG] Input tensor shape: ${inputTensor.shape}, type: ${inputTensor.type}');
+      
+      final numOutputs = _tfliteInterpreter!.getOutputTensors().length;
+      print('[TFLite DEBUG] Number of output tensors: $numOutputs');
+      for (int i = 0; i < numOutputs; i++) {
+        final outTensor = _tfliteInterpreter!.getOutputTensor(i);
+        print('[TFLite DEBUG] Output $i shape: ${outTensor.shape}, type: ${outTensor.type}');
+      }
+      
+      // Check if model expects uint8 or float32 input
+      final inputType = inputTensor.type;
+      
+      dynamic inputData;
+      if (inputType == tfl.TensorType.uint8) {
+        // Model expects uint8 input (0-255) - no normalization needed
+        final input = Uint8List(1 * inputSize * inputSize * 3);
+        for (int i = 0; i < resizedInput.length; i++) {
+          input[i] = resizedInput[i].toInt().clamp(0, 255);
+        }
+        inputData = input.reshape([1, inputSize, inputSize, 3]);
+        print('[TFLite DEBUG] Using uint8 input (0-255)');
+      } else {
+        // Model expects float32 input
+        // SSD MobileNet COCO uses mean=127.5, std=127.5 normalization
+        // Output range: -1 to 1
+        final input = Float32List(1 * inputSize * inputSize * 3);
+        for (int i = 0; i < resizedInput.length; i++) {
+          input[i] = (resizedInput[i] - 127.5) / 127.5;
+        }
+        inputData = input.reshape([1, inputSize, inputSize, 3]);
+        print('[TFLite DEBUG] Using float32 input (normalized -1 to 1)');
+      }
+      
+      // Prepare output tensors based on actual model output shapes
+      // Standard SSD MobileNet COCO outputs: boxes[1,10,4], classes[1,10], scores[1,10], count[1]
+      final outputLocations = List.generate(1, (_) => List.generate(10, (_) => List.filled(4, 0.0)));
+      final outputClasses = List.generate(1, (_) => List.filled(10, 0.0));
+      final outputScores = List.generate(1, (_) => List.filled(10, 0.0));
+      final numDetections = List.filled(1, 0.0);
+      
+      final outputs = <int, Object>{
+        0: outputLocations,
+        1: outputClasses,
+        2: outputScores,
+        3: numDetections,
+      };
+      
+      // Run inference
+      print('[TFLite DEBUG] Running inference...');
+      _tfliteInterpreter!.runForMultipleInputs([inputData], outputs);
+      print('[TFLite DEBUG] Inference complete');
+      
+      print('[TFLite DEBUG] numDetections raw: ${numDetections[0]}');
+      final count = numDetections[0].toInt().clamp(0, 10);
+      print('[TFLite DEBUG] Detection count: $count');
+      
+      if (count > 0) {
+        print('[TFLite DEBUG] First detection - score: ${outputScores[0][0]}, class: ${outputClasses[0][0]}');
+      }
+      
+      final results = <DetectedObject>[];
+      
+      for (int i = 0; i < count; i++) {
+        final score = outputScores[0][i];
+        final classId = outputClasses[0][i].toInt();
+        
+        // Get label for logging
+        String labelForLog = 'unknown';
+        if (classId >= 0 && classId < _cocoLabels.length) {
+          labelForLog = _cocoLabels[classId];
+        }
+        print('[TFLite DEBUG] Detection $i: score=${(score * 100).toStringAsFixed(1)}%, classId=$classId ($labelForLog)');
+        
+        // Require 60% confidence for reliable detections
+        if (score < 0.60) continue;
+        
+        if (classId < 0 || classId >= _cocoLabels.length) {
+          print('[TFLite DEBUG] Invalid classId: $classId');
+          continue;
+        }
+        
+        final label = _cocoLabels[classId];
+        
+        // Skip background/unknown labels (marked as "???" in labelmap)
+        if (label == '???' || label.isEmpty) {
+          print('[TFLite DEBUG] Skipping background/unknown label at index $classId');
+          continue;
+        }
+        
+        // Get bounding box (normalized coordinates)
+        final top = outputLocations[0][i][0].clamp(0.0, 1.0);
+        final left = outputLocations[0][i][1].clamp(0.0, 1.0);
+        final bottom = outputLocations[0][i][2].clamp(0.0, 1.0);
+        final right = outputLocations[0][i][3].clamp(0.0, 1.0);
+        
+        final boundingBox = BoundingBox(
+          left: left,
+          top: top,
+          right: right,
+          bottom: bottom,
+        );
+        
+        final distance = _estimateDistanceFromBox(label, boundingBox, image.width, image.height);
+        final direction = _determineDirection(boundingBox);
+        
+        results.add(DetectedObject(
+          label: label,
+          confidence: score,
+          distance: distance,
+          direction: direction,
+          boundingBox: boundingBox,
+        ));
+        
+        print('[ML DEBUG] TFLite: $label (${(score * 100).toStringAsFixed(1)}%) at ${distance.toStringAsFixed(1)}m ${direction.name}');
+      }
+      
+      return results;
+    } catch (e, stackTrace) {
+      print('[ML DEBUG] TFLite detection error: $e');
+      print('[ML DEBUG] Stack trace: $stackTrace');
+      return [];
+    }
+  }
+  
+  /// Convert YUV camera image to RGB bytes
+  Uint8List? _convertYuvToRgb(CameraImage image) {
+    try {
+      if (image.planes.isEmpty) return null;
+      
+      final width = image.width;
+      final height = image.height;
+      final yPlane = image.planes[0].bytes;
+      final uPlane = image.planes.length > 1 ? image.planes[1].bytes : null;
+      final vPlane = image.planes.length > 2 ? image.planes[2].bytes : null;
+      
+      final rgb = Uint8List(width * height * 3);
+      
+      for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+          final yIndex = y * width + x;
+          final yValue = yPlane[yIndex];
+          
+          int r, g, b;
+          if (uPlane != null && vPlane != null) {
+            // YUV420 to RGB conversion
+            final uvIndex = (y ~/ 2) * (width ~/ 2) + (x ~/ 2);
+            final uValue = uPlane.length > uvIndex ? uPlane[uvIndex] : 128;
+            final vValue = vPlane.length > uvIndex ? vPlane[uvIndex] : 128;
+            
+            r = (yValue + 1.402 * (vValue - 128)).round().clamp(0, 255);
+            g = (yValue - 0.344136 * (uValue - 128) - 0.714136 * (vValue - 128)).round().clamp(0, 255);
+            b = (yValue + 1.772 * (uValue - 128)).round().clamp(0, 255);
+          } else {
+            // Grayscale fallback
+            r = g = b = yValue;
+          }
+          
+          final rgbIndex = (y * width + x) * 3;
+          rgb[rgbIndex] = r;
+          rgb[rgbIndex + 1] = g;
+          rgb[rgbIndex + 2] = b;
+        }
+      }
+      
+      return rgb;
+    } catch (e) {
+      print('[ML DEBUG] YUV to RGB conversion error: $e');
+      return null;
+    }
+  }
+  
+  /// Resize RGB image to target dimensions
+  Float32List _resizeImage(Uint8List rgb, int srcWidth, int srcHeight, int dstWidth, int dstHeight) {
+    final result = Float32List(dstWidth * dstHeight * 3);
+    
+    final xRatio = srcWidth / dstWidth;
+    final yRatio = srcHeight / dstHeight;
+    
+    for (int y = 0; y < dstHeight; y++) {
+      for (int x = 0; x < dstWidth; x++) {
+        final srcX = (x * xRatio).floor().clamp(0, srcWidth - 1);
+        final srcY = (y * yRatio).floor().clamp(0, srcHeight - 1);
+        
+        final srcIndex = (srcY * srcWidth + srcX) * 3;
+        final dstIndex = (y * dstWidth + x) * 3;
+        
+        if (srcIndex + 2 < rgb.length) {
+          result[dstIndex] = rgb[srcIndex].toDouble();
+          result[dstIndex + 1] = rgb[srcIndex + 1].toDouble();
+          result[dstIndex + 2] = rgb[srcIndex + 2].toDouble();
+        }
+      }
+    }
+    
+    return result;
+  }
+
+  /// Check if a label is generic/useless for navigation (like "pattern", "texture", etc.)
+  bool _isGenericLabel(String label) {
+    const genericLabels = {
+      'pattern', 'texture', 'design', 'art', 'material', 'fabric',
+      'sky', 'cloud', 'horizon', 'floor', 'ground', 'wall', 'ceiling',
+      'indoor', 'outdoor', 'room', 'building', 'architecture',
+      'color', 'shape', 'line', 'circle', 'rectangle', 'square',
+      'light', 'shadow', 'reflection', 'background', 'foreground',
+      'nature', 'landscape', 'scene', 'view', 'space', 'area',
+      'surface', 'wood', 'metal', 'plastic', 'glass', 'concrete',
+      'tile', 'carpet', 'grass', 'water', 'sand', 'snow', 'ice',
+    };
+    return genericLabels.contains(label);
   }
 
   /// Fallback obstacle detection using image analysis
@@ -578,6 +1035,34 @@ class MlServiceImpl implements MlService {
     }
   }
 
+  /// Check if two bounding boxes overlap significantly
+  bool _boxesOverlap(BoundingBox a, BoundingBox b, {double threshold = 0.3}) {
+    // Calculate intersection
+    final xOverlap = (a.right.clamp(0, 1) - a.left.clamp(0, 1)).clamp(0, 1) > 0 &&
+                     (b.right.clamp(0, 1) - b.left.clamp(0, 1)).clamp(0, 1) > 0;
+    final yOverlap = (a.bottom.clamp(0, 1) - a.top.clamp(0, 1)).clamp(0, 1) > 0 &&
+                     (b.bottom.clamp(0, 1) - b.top.clamp(0, 1)).clamp(0, 1) > 0;
+    
+    if (!xOverlap || !yOverlap) return false;
+    
+    final intersectLeft = a.left > b.left ? a.left : b.left;
+    final intersectTop = a.top > b.top ? a.top : b.top;
+    final intersectRight = a.right < b.right ? a.right : b.right;
+    final intersectBottom = a.bottom < b.bottom ? a.bottom : b.bottom;
+    
+    if (intersectRight <= intersectLeft || intersectBottom <= intersectTop) {
+      return false;
+    }
+    
+    final intersectArea = (intersectRight - intersectLeft) * (intersectBottom - intersectTop);
+    final areaA = (a.right - a.left) * (a.bottom - a.top);
+    final areaB = (b.right - b.left) * (b.bottom - b.top);
+    final minArea = areaA < areaB ? areaA : areaB;
+    
+    // Return true if intersection is more than threshold of the smaller box
+    return minArea > 0 && (intersectArea / minArea) > threshold;
+  }
+
   ObjectDirection _determineDirection(BoundingBox box) {
     final centerX = box.centerX;
     
@@ -588,6 +1073,41 @@ class MlServiceImpl implements MlService {
     } else {
       return ObjectDirection.center;
     }
+  }
+
+  /// Estimate distance from confidence level for Image Labeler results
+  /// (which don't have real bounding boxes)
+  double _estimateDistanceFromConfidence(double confidence, String label) {
+    // Image Labeler confidence roughly correlates with object prominence:
+    // - Very high confidence often means object dominates the frame (closer)
+    // - Lower confidence might mean object is smaller/farther or partially visible
+    
+    // Base distance estimate from confidence
+    double baseDistance;
+    if (confidence > 0.85) {
+      baseDistance = 2.5; // Very prominent, likely close
+    } else if (confidence > 0.75) {
+      baseDistance = 3.5; // Prominent
+    } else if (confidence > 0.65) {
+      baseDistance = 5.0; // Moderate
+    } else if (confidence > 0.55) {
+      baseDistance = 6.5; // Less prominent
+    } else {
+      baseDistance = 8.0; // Low confidence, likely far or small
+    }
+    
+    // Adjust based on typical object size - larger objects seen at same confidence are farther
+    final referenceHeight = _objectReferenceHeights[label.toLowerCase()];
+    if (referenceHeight != null) {
+      // Large objects (>1.5m) at high confidence are probably farther than small objects
+      if (referenceHeight > 1.5) {
+        baseDistance *= 1.3; // Increase distance estimate for large objects
+      } else if (referenceHeight < 0.3) {
+        baseDistance *= 0.7; // Decrease for small objects (they must be close to be detected)
+      }
+    }
+    
+    return baseDistance.clamp(1.0, 10.0);
   }
 
   double _estimateDistanceFromBox(
@@ -605,10 +1125,13 @@ class MlServiceImpl implements MlService {
     // Simple pinhole camera model for distance estimation
     // d = (H * f) / h
     // Where H = real height, f = focal length (normalized), h = apparent height
-    const focalLength = 1.0; // Normalized focal length
+    // Adjusted focal length based on typical smartphone camera FOV (~70 degrees)
+    // This gives more realistic distance estimates
+    const focalLength = 1.4; // Adjusted for typical smartphone camera
     
     if (apparentHeight <= 0) return 10.0; // Far away default
     
+    // Apply focal length adjustment
     final distance = (referenceHeight * focalLength) / apparentHeight;
     
     return distance.clamp(0.1, 10.0); // Clamp to reasonable range
@@ -641,6 +1164,8 @@ class MlServiceImpl implements MlService {
   @override
   Future<void> dispose() async {
     _mlKitObjectDetector?.close();
+    _imageLabeler?.close();
+    _tfliteInterpreter?.close();
     _isInitialized = false;
     print('[ML DEBUG] ML Service disposed');
   }

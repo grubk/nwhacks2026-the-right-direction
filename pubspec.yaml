@@ -32,6 +32,7 @@ dependencies:
   google_mlkit_object_detection: ^0.11.0
   google_mlkit_pose_detection: ^0.10.0
   google_generative_ai: ^0.4.3
+  google_mlkit_image_labeling: ^0.10.0
   
   # Speech & Audio
   speech_to_text: ^7.0.0
@@ -62,6 +63,8 @@ flutter:
   
   assets:
     - assets/models/.gitkeep
+    - assets/models/coco_labels.txt
+    - assets/models/ssd_mobilenet.tflite
     - assets/images/.gitkeep
     - assets/sounds/.gitkeep
   

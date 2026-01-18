@@ -22,8 +22,9 @@ class ObjectDetectionRepositoryImpl implements ObjectDetectionRepository {
   bool _ttsEnabled = true;
   
   // Throttle detection to manage performance
+  // Lower frame rate (500ms = 2 FPS) allows higher resolution processing
   DateTime? _lastDetectionTime;
-  static const _detectionInterval = Duration(milliseconds: 200);
+  static const _detectionInterval = Duration(milliseconds: 500);
 
   ObjectDetectionRepositoryImpl({
     required this.cameraService,
@@ -211,8 +212,8 @@ class ObjectDetectionRepositoryImpl implements ObjectDetectionRepository {
         break;
     }
     
-    // LiDAR detects depth but not object type, so use generic "object"
-    return 'object detected $distance meters $direction';
+    // LiDAR detects depth but not object type, so use "obstacle"
+    return 'obstacle detected $distance meters $direction';
   }
 
   NavigationAlert _generateNavigationAlert(List<DetectedObject> objects) {
@@ -224,18 +225,21 @@ class ObjectDetectionRepositoryImpl implements ObjectDetectionRepository {
       }
     }
 
-    // Determine alert level
+    // Determine alert level - adjusted thresholds for real-world distances
+    // Only trigger alerts for genuinely close objects to reduce notification overload
     NavigationAlertLevel level;
     if (closest == null) {
       level = NavigationAlertLevel.clear;
-    } else if (closest.distance < 0.5) {
-      level = NavigationAlertLevel.critical;
     } else if (closest.distance < 1.0) {
-      level = NavigationAlertLevel.high;
-    } else if (closest.distance < 2.0) {
-      level = NavigationAlertLevel.moderate;
+      level = NavigationAlertLevel.critical;  // Very close - immediate danger
+    } else if (closest.distance < 1.5) {
+      level = NavigationAlertLevel.high;      // Close - needs attention
+    } else if (closest.distance < 2.5) {
+      level = NavigationAlertLevel.moderate;  // Approaching
+    } else if (closest.distance < 4.0) {
+      level = NavigationAlertLevel.low;       // Detected but not urgent
     } else {
-      level = NavigationAlertLevel.low;
+      level = NavigationAlertLevel.clear;     // Far enough - no alert needed
     }
 
     // Generate spoken guidance
@@ -261,34 +265,50 @@ class ObjectDetectionRepositoryImpl implements ObjectDetectionRepository {
 
     final distance = closest.distance.toStringAsFixed(1);
     String direction;
+    String directionForDetected;
 
     switch (closest.direction) {
       case ObjectDirection.left:
         direction = 'on your left';
+        directionForDetected = 'to your left';
         break;
       case ObjectDirection.right:
         direction = 'on your right';
+        directionForDetected = 'to your right';
         break;
       case ObjectDirection.center:
         direction = 'ahead';
+        directionForDetected = 'ahead';
         break;
       case ObjectDirection.unknown:
         direction = 'nearby';
+        directionForDetected = 'nearby';
         break;
     }
 
     // Determine if the object has a known label or is generic
-    final label = closest.label.toLowerCase();
-    final isKnownObject = label != 'object' && label != 'obstacle' && label.isNotEmpty;
-    final objectName = isKnownObject ? closest.label : 'object';
+    // ML Kit provides labels like "person", "car", etc. when it can identify the object
+    // Generic labels "object" or "obstacle" are used when the type is unknown
+    final label = closest.label.toLowerCase().trim();
+    final isKnownObject = label.isNotEmpty && 
+                          label != 'object' && 
+                          label != 'obstacle' && 
+                          label != 'unknown';
+    
+    // Use the actual object name if known, otherwise say "obstacle"
+    final objectName = isKnownObject ? closest.label : 'obstacle';
 
     // Format the guidance based on urgency
     if (level == NavigationAlertLevel.critical) {
+      // Critical: Very close, urgent warning
       return 'Stop! $objectName $direction';
     } else if (level == NavigationAlertLevel.high) {
+      // High: Close, needs attention with distance info
       return 'Caution: $objectName $distance meters $direction';
     } else {
-      return '$objectName detected $direction';
+      // Low/Moderate: Standard detection announcement
+      // Format: "{object name} detected ahead" or "obstacle detected ahead"
+      return '$objectName detected $directionForDetected';
     }
   }
 
